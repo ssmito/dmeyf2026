@@ -1,3 +1,5 @@
+# data folder
+/DATA/
 #Archivos que considero datasets grandes, lastima que git no lo permita nativamente
 *.csv
 *.csv.gz
