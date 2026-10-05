@@ -1,5 +1,7 @@
 # data folder
 /DATA/
+/mis_pruebas/clustering/
+/mis_pruebas/presentacion/
 /mis_pruebas/*/*.pdf
 /mis_pruebas/*/*/*.pdf
 /mis_pruebas/*/*.csv

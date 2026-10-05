@@ -2,6 +2,17 @@ import pandas as pd
 import numpy as np
 import re
 
+def agregar_rangos_por_mes(df, columnas):
+    resultado = df.copy()
+
+    for columna in columnas:
+        resultado[f"{columna}_rango"] = (
+            resultado.groupby("foto_mes")[columna]
+            .rank(method="min", ascending=True)
+            .astype("Int64")
+        )
+
+    return resultado
 
 def mes_a_indice(serie):
     """
@@ -16,6 +27,7 @@ def indice_a_mes(indice):
     """Convierte el índice mensual nuevamente a YYYYMM."""
     anio, mes_desde_cero = divmod(int(indice), 12)
     return anio * 100 + mes_desde_cero + 1
+
 
 
 def construir_dataset_por_cliente(
@@ -353,3 +365,756 @@ def agregar_mes_baja(
     )
 
     return resultado
+
+def dataset_por_cliente_meses_alineados(
+    df,
+    columnas_features,
+    k,
+    mes_corte=202108,
+):
+    datos = df.copy()
+
+    columnas_necesarias = {
+        "numero_de_cliente",
+        "foto_mes",
+        *columnas_features,
+    }
+
+    faltantes = columnas_necesarias - set(datos.columns)
+
+    if faltantes:
+        raise ValueError(
+            f"Faltan columnas: {sorted(faltantes)}"
+        )
+
+    if datos.duplicated(
+        ["numero_de_cliente", "foto_mes"]
+    ).any():
+        raise ValueError(
+            "Hay más de una fila para algún "
+            "numero_de_cliente/foto_mes"
+        )
+
+    # Convertimos YYYYMM a un índice mensual consecutivo.
+    datos["_mes_idx"] = mes_a_indice(
+        datos["foto_mes"]
+    )
+
+    anio_corte = mes_corte // 100
+    numero_mes_corte = mes_corte % 100
+
+    corte_idx = (
+        anio_corte * 12
+        + numero_mes_corte
+        - 1
+    )
+
+    mes_anterior_idx = corte_idx - 1
+
+    # Se consideran solamente clientes que ya existían
+    # hasta el mes de corte. Esto evita incluir clientes
+    # que aparecen por primera vez después del corte.
+    clientes = (
+        datos.loc[
+            datos["_mes_idx"] <= corte_idx,
+            "numero_de_cliente",
+        ]
+        .drop_duplicates()
+        .sort_values()
+    )
+
+    presentes_corte = set(
+        datos.loc[
+            datos["_mes_idx"] == corte_idx,
+            "numero_de_cliente",
+        ]
+    )
+
+    presentes_mes_anterior = set(
+        datos.loc[
+            datos["_mes_idx"] == mes_anterior_idx,
+            "numero_de_cliente",
+        ]
+    )
+
+    salida_base = pd.DataFrame({
+        "numero_de_cliente": clientes
+    })
+
+    # CONTINUA:
+    # aparece en el mes de corte.
+    #
+    # BAJA:
+    # aparece el mes anterior, pero no en el corte.
+    #
+    # BAJA_PREVIA:
+    # no aparece ni en el corte ni en el mes anterior.
+    salida_base["grupo"] = np.select(
+        [
+            salida_base["numero_de_cliente"].isin(
+                presentes_corte
+            ),
+            salida_base["numero_de_cliente"].isin(
+                presentes_mes_anterior
+            ),
+        ],
+        [
+            "CONTINUA",
+            "BAJA",
+        ],
+        default="BAJA_PREVIA",
+    )
+
+    salida_base["punto_0"] = mes_corte
+
+    # Cantidad total de meses observados antes del corte.
+    largo_historial = (
+        datos.loc[
+            datos["_mes_idx"] < corte_idx
+        ]
+        .groupby("numero_de_cliente")["_mes_idx"]
+        .nunique()
+        .reindex(clientes, fill_value=0)
+        .rename("largo_historial")
+    )
+
+    # Calculamos la posición relativa respecto del corte.
+    trayectoria = datos.loc[
+        datos["numero_de_cliente"].isin(clientes)
+    ].copy()
+
+    trayectoria["_tiempo_relativo"] = (
+        trayectoria["_mes_idx"] - corte_idx
+    )
+
+    # Conservamos únicamente los K meses anteriores.
+    trayectoria = trayectoria.loc[
+        trayectoria["_tiempo_relativo"].between(
+            -k,
+            -1,
+        )
+    ]
+
+    # Pasamos de una fila por cliente/mes
+    # a una fila por cliente.
+    valores = trayectoria.pivot(
+        index="numero_de_cliente",
+        columns="_tiempo_relativo",
+        values=columnas_features,
+    )
+
+    columnas_esperadas = pd.MultiIndex.from_product(
+        [
+            columnas_features,
+            range(-1, -k - 1, -1),
+        ]
+    )
+
+    valores = valores.reindex(
+        columns=columnas_esperadas
+    )
+
+    valores.columns = [
+        f"{feature}_{periodo}"
+        for feature, periodo in valores.columns
+    ]
+
+    valores = valores.reindex(clientes)
+
+    salida = (
+        salida_base
+        .set_index("numero_de_cliente")
+        .join(largo_historial)
+        .join(valores)
+        .reset_index()
+    )
+
+    # Deltas entre meses consecutivos:
+    # valor más nuevo menos valor más viejo.
+    for feature in columnas_features:
+        for periodo_actual in range(-1, -k, -1):
+
+            periodo_anterior = periodo_actual - 1
+
+            columna_actual = (
+                f"{feature}_{periodo_actual}"
+            )
+
+            columna_anterior = (
+                f"{feature}_{periodo_anterior}"
+            )
+
+            nombre_delta = (
+                f"delta_{feature}_"
+                f"{periodo_actual}_{periodo_anterior}"
+            )
+
+            salida[nombre_delta] = (
+                salida[columna_actual]
+                - salida[columna_anterior]
+            )
+
+    return salida
+
+def dataset_por_cliente_tendencia(
+    df,
+    columnas_features,
+    k,
+    mes_corte=202108,
+    columnas_sin_calculos_temporales=(),
+):
+    datos = df.copy()
+
+    columnas_necesarias = {
+        "numero_de_cliente",
+        "foto_mes",
+        *columnas_features,
+    }
+    faltantes = columnas_necesarias - set(datos.columns)
+
+    if faltantes:
+        raise ValueError(f"Faltan columnas: {sorted(faltantes)}")
+
+    if datos.duplicated(["numero_de_cliente", "foto_mes"]).any():
+        raise ValueError(
+            "Hay más de una fila para algún numero_de_cliente/foto_mes"
+        )
+
+    datos["_mes_idx"] = mes_a_indice(datos["foto_mes"])
+
+    anio_corte = mes_corte // 100
+    numero_mes_corte = mes_corte % 100
+    corte_idx = anio_corte * 12 + numero_mes_corte - 1
+    mes_anterior_idx = corte_idx - 1
+
+    clientes = (
+        datos.loc[
+            datos["_mes_idx"] <= corte_idx,
+            "numero_de_cliente",
+        ]
+        .drop_duplicates()
+        .sort_values()
+    )
+
+    presentes_corte = set(
+        datos.loc[
+            datos["_mes_idx"] == corte_idx,
+            "numero_de_cliente",
+        ]
+    )
+    presentes_mes_anterior = set(
+        datos.loc[
+            datos["_mes_idx"] == mes_anterior_idx,
+            "numero_de_cliente",
+        ]
+    )
+
+    salida_base = pd.DataFrame({"numero_de_cliente": clientes})
+    salida_base["grupo"] = np.select(
+        [
+            salida_base["numero_de_cliente"].isin(presentes_corte),
+            salida_base["numero_de_cliente"].isin(presentes_mes_anterior),
+        ],
+        ["CONTINUA", "BAJA"],
+        default="BAJA_PREVIA",
+    )
+    salida_base["punto_0"] = mes_corte
+
+    largo_historial = (
+        datos.loc[datos["_mes_idx"] < corte_idx]
+        .groupby("numero_de_cliente")["_mes_idx"]
+        .nunique()
+        .reindex(clientes, fill_value=0)
+        .rename("largo_historial")
+    )
+
+    trayectoria = datos.loc[
+        datos["numero_de_cliente"].isin(clientes)
+    ].copy()
+    trayectoria["_tiempo_relativo"] = (
+        trayectoria["_mes_idx"] - corte_idx
+    )
+    trayectoria = trayectoria.loc[
+        trayectoria["_tiempo_relativo"].between(-k, -1)
+    ]
+
+    valores = trayectoria.pivot(
+        index="numero_de_cliente",
+        columns="_tiempo_relativo",
+        values=columnas_features,
+    )
+    columnas_esperadas = pd.MultiIndex.from_product(
+        [columnas_features, range(-1, -k - 1, -1)]
+    )
+    valores = valores.reindex(columns=columnas_esperadas)
+    valores.columns = [
+        f"{feature}_{periodo}"
+        for feature, periodo in valores.columns
+    ]
+    valores = valores.reindex(clientes)
+
+    salida = (
+        salida_base
+        .set_index("numero_de_cliente")
+        .join(largo_historial)
+    )
+
+    for feature in columnas_features:
+        meses = valores[
+            [
+                f"{feature}_{periodo}"
+                for periodo in range(-1, -k - 1, -1)
+            ]
+        ]
+        salida[feature] = meses.iloc[:, 0]
+
+        if feature in columnas_sin_calculos_temporales:
+            continue
+
+        completo = meses.notna().all(axis=1)
+        columna_delta = f"{feature}_delt_prom"
+        columna_relativo = f"{feature}_delt_rel"
+        columna_cambio = f"{feature}_delt_tend"
+
+        if k < 2:
+            salida[columna_delta] = np.nan
+            salida[columna_relativo] = np.nan
+        else:
+            delta = (
+                (meses.iloc[:, 0] - meses.iloc[:, -1]) / (k - 1)
+            ).where(completo)
+            nivel = meses.abs().mean(axis=1, skipna=False)
+            relativo = delta / nivel.replace(0, np.nan)
+            relativo = relativo.where(nivel.ne(0), 0.0)
+
+            salida[columna_delta] = delta
+            salida[columna_relativo] = relativo
+
+        if k < 3:
+            salida[columna_cambio] = np.nan
+        else:
+            tramos_recientes = (k - 1) // 2
+            tramos_antiguos = (k - 1) - tramos_recientes
+            medio = meses.iloc[:, tramos_recientes]
+
+            pendiente_reciente = (
+                meses.iloc[:, 0] - medio
+            ) / tramos_recientes
+            pendiente_antigua = (
+                medio - meses.iloc[:, -1]
+            ) / tramos_antiguos
+
+            salida[columna_cambio] = (
+                pendiente_reciente - pendiente_antigua
+            ).where(completo)
+
+    return salida.reset_index()
+
+def dataset_por_clientes_tendencia_no_alineado(
+    df,
+    columnas_features,
+    k,
+    columnas_sin_calculos_temporales=(),
+    seed=214363,
+):
+    if k < 1:
+        raise ValueError("k debe ser al menos 1.")
+
+    datos = df.copy()
+    necesarias = {
+        "numero_de_cliente", "foto_mes", "mes_baja",
+        *columnas_features,
+    }
+    faltantes = necesarias - set(datos.columns)
+    if faltantes:
+        raise ValueError(f"Faltan columnas: {sorted(faltantes)}")
+    if datos.duplicated(["numero_de_cliente", "foto_mes"]).any():
+        raise ValueError(
+            "Hay más de una fila para algún numero_de_cliente/foto_mes"
+        )
+
+    datos["_mes_idx"] = mes_a_indice(datos["foto_mes"])
+    datos["_baja_idx"] = mes_a_indice(datos["mes_baja"])
+
+    # Un cliente con mes_baja informado nunca puede ser CONTINUA.
+    puntos_baja = (
+        datos.loc[
+            datos["_baja_idx"].notna(),
+            ["numero_de_cliente", "_baja_idx"],
+        ]
+        .drop_duplicates()
+    )
+    if puntos_baja["numero_de_cliente"].duplicated().any():
+        raise ValueError("Hay clientes con más de un mes_baja")
+    ids_baja = set(puntos_baja["numero_de_cliente"])
+    puntos_baja = puntos_baja.rename(
+        columns={"_baja_idx": "_punto_0_idx"}
+    )
+
+    # Se conservan las BAJA con registros en los k meses previos.
+    meses_baja = datos[["numero_de_cliente", "_mes_idx"]].merge(
+        puntos_baja,
+        on="numero_de_cliente",
+        how="inner",
+        validate="many_to_one",
+    )
+    diferencia = (
+        meses_baja["_mes_idx"] - meses_baja["_punto_0_idx"]
+    )
+    n_previos = (
+        meses_baja.loc[
+            diferencia.between(-k, -1)
+        ]
+        .groupby("numero_de_cliente")
+        .size()
+    )
+    puntos_baja = puntos_baja.loc[
+        puntos_baja["numero_de_cliente"].map(n_previos).eq(k).fillna(False)
+    ].copy()
+    if puntos_baja.empty:
+        raise ValueError("No hay BAJA con los k meses anteriores completos.")
+    puntos_baja["grupo"] = "BAJA"
+
+    # Los CONTINUA deben permanecer sin interrupciones desde su ingreso
+    # hasta el último mes disponible en el dataset.
+    ultimo_mes = int(datos["_mes_idx"].max())
+    historia = datos.groupby("numero_de_cliente")["_mes_idx"].agg(
+        ["min", "max", "nunique"]
+    )
+    historia = historia.loc[~historia.index.isin(ids_baja)]
+    historia = historia.loc[
+        historia["max"].eq(ultimo_mes)
+        & historia["nunique"].eq(ultimo_mes - historia["min"] + 1)
+    ]
+
+    # La distribución objetivo se calcula con las BAJA elegibles.
+    frecuencias = puntos_baja["_punto_0_idx"].value_counts().sort_index()
+    meses_corte = frecuencias.index.to_numpy(dtype=int)
+    elegibles = []
+    for cliente, primer_mes in historia["min"].items():
+        posibles = meses_corte[meses_corte - k >= int(primer_mes)]
+        if len(posibles):
+            elegibles.append((cliente, posibles))
+
+    rng = np.random.default_rng(seed)
+    objetivos = (
+        frecuencias / frecuencias.sum() * len(elegibles)
+    ).to_dict()
+    asignados = {mes: 0 for mes in meses_corte}
+    cortes_continua = {}
+
+    # Se asignan primero los clientes con menos cortes posibles.
+    orden = rng.permutation(len(elegibles))
+    orden = sorted(orden, key=lambda i: len(elegibles[i][1]))
+    for i in orden:
+        cliente, posibles = elegibles[i]
+        deficit = np.array([
+            objetivos[mes] - asignados[mes] for mes in posibles
+        ])
+        mejores = posibles[np.isclose(deficit, deficit.max())]
+        mes_elegido = int(rng.choice(mejores))
+        cortes_continua[cliente] = mes_elegido
+        asignados[mes_elegido] += 1
+
+    puntos_continua = pd.DataFrame({
+        "numero_de_cliente": list(cortes_continua),
+        "_punto_0_idx": list(cortes_continua.values()),
+        "grupo": "CONTINUA",
+    })
+    puntos = pd.concat(
+        [puntos_baja, puntos_continua],
+        ignore_index=True,
+    )
+    puntos["punto_0"] = puntos["_punto_0_idx"].map(indice_a_mes)
+
+    trayectoria = datos.merge(
+        puntos[["numero_de_cliente", "_punto_0_idx"]],
+        on="numero_de_cliente",
+        how="inner",
+        validate="many_to_one",
+    )
+    trayectoria["_tiempo_relativo"] = (
+        trayectoria["_mes_idx"] - trayectoria["_punto_0_idx"]
+    )
+    largo_historial = (
+        trayectoria.loc[trayectoria["_tiempo_relativo"] < 0]
+        .groupby("numero_de_cliente")["_mes_idx"]
+        .nunique()
+        .rename("largo_historial")
+    )
+    trayectoria = trayectoria.loc[
+        trayectoria["_tiempo_relativo"].between(-k, -1)
+    ]
+
+    valores = trayectoria.pivot(
+        index="numero_de_cliente",
+        columns="_tiempo_relativo",
+        values=columnas_features,
+    )
+    esperadas = pd.MultiIndex.from_product([
+        columnas_features, range(-1, -k - 1, -1)
+    ])
+    valores = valores.reindex(columns=esperadas)
+    valores.columns = [
+        f"{feature}_{periodo}" for feature, periodo in valores.columns
+    ]
+    valores = valores.reindex(puntos["numero_de_cliente"])
+
+    salida = (
+        puntos[["numero_de_cliente", "grupo", "punto_0"]]
+        .set_index("numero_de_cliente")
+        .join(largo_historial)
+    )
+    for feature in columnas_features:
+        meses = valores[[
+            f"{feature}_{periodo}"
+            for periodo in range(-1, -k - 1, -1)
+        ]]
+        salida[feature] = meses.iloc[:, 0]
+
+        if feature in columnas_sin_calculos_temporales:
+            continue
+
+        meses = meses.apply(pd.to_numeric).astype(float)
+        completo = meses.notna().all(axis=1)
+        if k < 2:
+            salida[f"{feature}_delt_prom"] = np.nan
+            salida[f"{feature}_delt_rel"] = np.nan
+        else:
+            delta = (
+                (meses.iloc[:, 0] - meses.iloc[:, -1]) / (k - 1)
+            ).where(completo)
+            nivel = meses.abs().mean(axis=1, skipna=False)
+            relativo = delta / nivel.replace(0, np.nan)
+            relativo = relativo.where(nivel.ne(0), 0.0)
+            salida[f"{feature}_delt_prom"] = delta
+            salida[f"{feature}_delt_rel"] = relativo
+
+        if k < 3:
+            salida[f"{feature}_delt_tend"] = np.nan
+        else:
+            tramos_recientes = (k - 1) // 2
+            tramos_antiguos = (k - 1) - tramos_recientes
+            medio = meses.iloc[:, tramos_recientes]
+            pendiente_reciente = (
+                meses.iloc[:, 0] - medio
+            ) / tramos_recientes
+            pendiente_antigua = (
+                medio - meses.iloc[:, -1]
+            ) / tramos_antiguos
+            salida[f"{feature}_delt_tend"] = (
+                pendiente_reciente - pendiente_antigua
+            ).where(completo)
+
+    return salida.reset_index()
+
+def dataset_por_clientes_tendencia_no_alineado_con_embargo(
+    df,
+    columnas_features,
+    k,
+    columnas_sin_calculos_temporales=(),
+    seed=214363,
+):
+    if k < 1:
+        raise ValueError("k debe ser al menos 1.")
+
+    datos = df.copy()
+    necesarias = {
+        "numero_de_cliente", "foto_mes", "mes_baja",
+        *columnas_features,
+    }
+    faltantes = necesarias - set(datos.columns)
+    if faltantes:
+        raise ValueError(f"Faltan columnas: {sorted(faltantes)}")
+    if datos.duplicated(["numero_de_cliente", "foto_mes"]).any():
+        raise ValueError(
+            "Hay más de una fila para algún numero_de_cliente/foto_mes"
+        )
+
+    datos["_mes_idx"] = mes_a_indice(datos["foto_mes"])
+    datos["_baja_idx"] = mes_a_indice(datos["mes_baja"])
+
+    # Un cliente con mes_baja informado nunca puede ser CONTINUA.
+    puntos_baja = (
+        datos.loc[
+            datos["_baja_idx"].notna(),
+            ["numero_de_cliente", "_baja_idx"],
+        ]
+        .drop_duplicates()
+    )
+    if puntos_baja["numero_de_cliente"].duplicated().any():
+        raise ValueError("Hay clientes con más de un mes_baja")
+    ids_baja = set(puntos_baja["numero_de_cliente"])
+    puntos_baja = puntos_baja.rename(
+        columns={"_baja_idx": "_punto_0_idx"}
+    )
+
+    # BAJA debe aparecer en -1. Ese mes no se usa como feature.
+    # Además debe tener los k meses de -2 a -(k+1).
+    meses_baja = datos[["numero_de_cliente", "_mes_idx"]].merge(
+        puntos_baja,
+        on="numero_de_cliente",
+        how="inner",
+        validate="many_to_one",
+    )
+    diferencia = (
+        meses_baja["_mes_idx"] - meses_baja["_punto_0_idx"]
+    )
+    n_previos = (
+        meses_baja.loc[
+            diferencia.between(-k - 1, -1)
+        ]
+        .groupby("numero_de_cliente")
+        .size()
+    )
+    puntos_baja = puntos_baja.loc[
+        puntos_baja["numero_de_cliente"]
+        .map(n_previos)
+        .eq(k + 1)
+        .fillna(False)
+    ].copy()
+    if puntos_baja.empty:
+        raise ValueError(
+            "No hay BAJA con el mes -1 y los k meses anteriores completos."
+        )
+    puntos_baja["grupo"] = "BAJA"
+
+    # Los CONTINUA permanecen sin interrupciones desde su ingreso
+    # hasta el último mes disponible en el dataset.
+    ultimo_mes = int(datos["_mes_idx"].max())
+    historia = datos.groupby("numero_de_cliente")["_mes_idx"].agg(
+        ["min", "max", "nunique"]
+    )
+    historia = historia.loc[~historia.index.isin(ids_baja)]
+    historia = historia.loc[
+        historia["max"].eq(ultimo_mes)
+        & historia["nunique"].eq(ultimo_mes - historia["min"] + 1)
+    ]
+
+    # Se usan los cortes de las BAJA elegibles para asignar
+    # los puntos_0 ficticios de CONTINUA.
+    frecuencias = puntos_baja["_punto_0_idx"].value_counts().sort_index()
+    meses_corte = frecuencias.index.to_numpy(dtype=int)
+    elegibles = []
+    for cliente, primer_mes in historia["min"].items():
+        posibles = meses_corte[
+            meses_corte - (k + 1) >= int(primer_mes)
+        ]
+        if len(posibles):
+            elegibles.append((cliente, posibles))
+
+    rng = np.random.default_rng(seed)
+    objetivos = (
+        frecuencias / frecuencias.sum() * len(elegibles)
+    ).to_dict()
+    asignados = {mes: 0 for mes in meses_corte}
+    cortes_continua = {}
+
+    # Se asignan primero los clientes con menos cortes posibles.
+    orden = rng.permutation(len(elegibles))
+    orden = sorted(orden, key=lambda i: len(elegibles[i][1]))
+    for i in orden:
+        cliente, posibles = elegibles[i]
+        deficit = np.array([
+            objetivos[mes] - asignados[mes] for mes in posibles
+        ])
+        mejores = posibles[np.isclose(deficit, deficit.max())]
+        mes_elegido = int(rng.choice(mejores))
+        cortes_continua[cliente] = mes_elegido
+        asignados[mes_elegido] += 1
+
+    puntos_continua = pd.DataFrame({
+        "numero_de_cliente": list(cortes_continua),
+        "_punto_0_idx": list(cortes_continua.values()),
+        "grupo": "CONTINUA",
+    })
+    puntos = pd.concat(
+        [puntos_baja, puntos_continua],
+        ignore_index=True,
+    )
+    puntos["punto_0"] = puntos["_punto_0_idx"].map(indice_a_mes)
+
+    trayectoria = datos.merge(
+        puntos[["numero_de_cliente", "_punto_0_idx"]],
+        on="numero_de_cliente",
+        how="inner",
+        validate="many_to_one",
+    )
+    trayectoria["_tiempo_relativo"] = (
+        trayectoria["_mes_idx"] - trayectoria["_punto_0_idx"]
+    )
+
+    # largo_historial sigue contando -1.
+    largo_historial = (
+        trayectoria.loc[trayectoria["_tiempo_relativo"] < 0]
+        .groupby("numero_de_cliente")["_mes_idx"]
+        .nunique()
+        .rename("largo_historial")
+    )
+
+    # Solo los k meses de -2 a -(k+1) entran en nivel y deltas.
+    trayectoria = trayectoria.loc[
+        trayectoria["_tiempo_relativo"].between(-k - 1, -2)
+    ]
+
+    valores = trayectoria.pivot(
+        index="numero_de_cliente",
+        columns="_tiempo_relativo",
+        values=columnas_features,
+    )
+    esperadas = pd.MultiIndex.from_product([
+        columnas_features, range(-2, -k - 2, -1)
+    ])
+    valores = valores.reindex(columns=esperadas)
+    valores.columns = [
+        f"{feature}_{periodo}" for feature, periodo in valores.columns
+    ]
+    valores = valores.reindex(puntos["numero_de_cliente"])
+
+    salida = (
+        puntos[["numero_de_cliente", "grupo", "punto_0"]]
+        .set_index("numero_de_cliente")
+        .join(largo_historial)
+    )
+    for feature in columnas_features:
+        meses = valores[[
+            f"{feature}_{periodo}"
+            for periodo in range(-2, -k - 2, -1)
+        ]]
+        salida[feature] = meses.iloc[:, 0]
+
+        if feature in columnas_sin_calculos_temporales:
+            continue
+
+        meses = meses.apply(pd.to_numeric).astype(float)
+        completo = meses.notna().all(axis=1)
+        if k < 2:
+            salida[f"{feature}_delt_prom"] = np.nan
+            salida[f"{feature}_delt_rel"] = np.nan
+        else:
+            delta = (
+                (meses.iloc[:, 0] - meses.iloc[:, -1]) / (k - 1)
+            ).where(completo)
+            nivel = meses.abs().mean(axis=1, skipna=False)
+            relativo = delta / nivel.replace(0, np.nan)
+            relativo = relativo.where(nivel.ne(0), 0.0)
+            salida[f"{feature}_delt_prom"] = delta
+            salida[f"{feature}_delt_rel"] = relativo
+
+        if k < 3:
+            salida[f"{feature}_delt_tend"] = np.nan
+        else:
+            tramos_recientes = (k - 1) // 2
+            tramos_antiguos = (k - 1) - tramos_recientes
+            medio = meses.iloc[:, tramos_recientes]
+            pendiente_reciente = (
+                meses.iloc[:, 0] - medio
+            ) / tramos_recientes
+            pendiente_antigua = (
+                medio - meses.iloc[:, -1]
+            ) / tramos_antiguos
+            salida[f"{feature}_delt_tend"] = (
+                pendiente_reciente - pendiente_antigua
+            ).where(completo)
+
+    return salida.reset_index()
