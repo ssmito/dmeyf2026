@@ -51,3 +51,71 @@ def ternaria(df):
     df.loc[df["ternaria"] == "", "ternaria"] = None
 
     return df
+
+def rankear_por_mes(
+    df,
+    columnas_excluidas,
+    escala="comun",
+    empates="dense"
+):
+    """
+    Reemplaza las variables por rankings calculados por columna y foto_mes.
+
+    df: dataframe de entrada, con registros cliente/mes.
+    columnas_excluidas: columnas que permanecen sin modificaciones.
+    escala:
+        "comun": mismo paso para positivos y negativos; máximo absoluto = 1.
+        "separada": cada signo se normaliza por separado hasta +1 o -1.
+    empates:
+        "dense": valores iguales comparten rango; el siguiente es consecutivo.
+        "average": valores iguales reciben el promedio de sus posiciones.
+
+    Conserva los ceros como 0, los NaN como NaN y el signo de los demás valores.
+    Un grupo constante no nulo queda en +1 o -1 según su signo.
+    Devuelve una copia, conservando columnas, índice y orden de las filas.
+    """
+    df = df.copy()
+    meses = df["foto_mes"].copy()
+
+    columnas = [
+        columna
+        for columna in df.columns
+        if columna not in columnas_excluidas
+    ]
+
+    for columna in columnas:
+        valores = df[columna]
+
+        ranking_positivo = (
+            valores.where(valores > 0)
+            .groupby(meses, sort=False)
+            .rank(method=empates)
+        )
+        ranking_negativo = (
+            (-valores.where(valores < 0))
+            .groupby(meses, sort=False)
+            .rank(method=empates)
+        )
+
+        maximo_positivo = (
+            ranking_positivo.groupby(meses, sort=False).transform("max")
+        )
+        maximo_negativo = (
+            ranking_negativo.groupby(meses, sort=False).transform("max")
+        )
+
+        if escala == "comun":
+            maximo = pd.concat(
+                [maximo_positivo, maximo_negativo], axis=1
+            ).max(axis=1)
+            maximo_positivo = maximo
+            maximo_negativo = maximo
+        elif escala != "separada":
+            raise ValueError('escala debe ser "comun" o "separada"')
+
+        ranking = (ranking_positivo / maximo_positivo).fillna(
+            -ranking_negativo / maximo_negativo
+        )
+        df[columna] = ranking.mask(valores.eq(0).fillna(False), 0.0)
+
+    return df
