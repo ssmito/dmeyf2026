@@ -1,0 +1,113 @@
+{
+  "dataset_files": [
+    "c_01_tern_2_lf_k6_p4.csv",
+    "c_01_tern_2_lf_O2_k3_p6.csv",
+    "RANKS_LF_O2_K6_P4.csv"
+  ],
+  "ids_rds": [
+    "40",
+    "40",
+    "62"
+  ],
+  "train_final": [
+    202103,
+    202104,
+    202105,
+    202106
+  ],
+  "future": [
+    202108
+  ],
+  "seeds": [
+    230047,
+    230059,
+    230063,
+    230077,
+    230081,
+    230089,
+    230101,
+    230107,
+    230117,
+    230123,
+    230137,
+    230143,
+    230149,
+    230189,
+    230203,
+    230213,
+    230221,
+    230227,
+    230233,
+    230239,
+    230257,
+    230273,
+    230281,
+    230291,
+    230303,
+    230309,
+    230311,
+    230327,
+    230339,
+    230341,
+    230353,
+    230357,
+    230369,
+    230383,
+    230387,
+    230389,
+    230393,
+    230431,
+    230449,
+    230453,
+    230467,
+    230471,
+    230479,
+    230501,
+    230507,
+    230539,
+    230551,
+    230561,
+    230563,
+    230567
+  ],
+  "columnas_excluir": [
+    "ternaria",
+    "ternaria_lag1",
+    "clase01",
+    "fold",
+    "azar",
+    "training",
+    "cprestamos_personales",
+    "mprestamos_personales",
+    "cprestamos_personales_lag1",
+    "mprestamos_personales_lag1",
+    "cprestamos_personales_delta1",
+    "mprestamos_personales_delta1",
+    "cprestamos_personales_lag_pond",
+    "mprestamos_personales_lag_pond",
+    "cprestamos_personales_delta_lag_pond",
+    "mprestamos_personales_delta_lag_pond"
+  ],
+  "fuentes": [
+    {
+      "dataset_bytes": 2500382681,
+      "dataset_mtime_ns": 1791334695334965923,
+      "rds_sha256": "00c99e216e6c9614b5a232b8e7c580f3a9b218dba77bc21d353c7be0fb22eb3c"
+    },
+    {
+      "dataset_bytes": 4271579770,
+      "dataset_mtime_ns": 1791335811418663883,
+      "rds_sha256": "00c99e216e6c9614b5a232b8e7c580f3a9b218dba77bc21d353c7be0fb22eb3c"
+    },
+    {
+      "dataset_bytes": 3763541873,
+      "dataset_mtime_ns": 1791579447030515451,
+      "rds_sha256": "5236eaabf3096b857ed52ceefc9d4f17f74c37dabe709a9061f8e7c761a66a0d"
+    }
+  ],
+  "versiones": {
+    "lightgbm": "4.7.0",
+    "pandas": "3.0.3",
+    "numpy": "2.4.6"
+  }
+}
