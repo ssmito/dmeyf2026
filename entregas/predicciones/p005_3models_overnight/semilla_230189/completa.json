@@ -1,0 +1,19 @@
+{
+  "seed": 230189,
+  "cantidad_registros_totales": [
+    983061,
+    983061,
+    983061
+  ],
+  "cantidad_registros_entrenamiento": [
+    654066,
+    654066,
+    654066
+  ],
+  "cantidad_clientes": 164647,
+  "archivos": [
+    "modelo_1_230189.csv",
+    "modelo_2_230189.csv",
+    "modelo_3_230189.csv"
+  ]
+}
