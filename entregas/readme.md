@@ -11,6 +11,8 @@ Correr toda la notebook como está, en orden, hasta el punto anterior a **Docume
 
 ## 2. DATASETS
 
+Punto de partida: colocar `competencia_01_crudo.csv` en `entregas/dataset/`, junto a las dos notebooks.
+
 Desde `entregas/dataset/`, ejecutar completas, como están:
 
 1. `versiones_dataset_1.ipynb`: genera los datasets necesarios para la cadena de LAG-009.
