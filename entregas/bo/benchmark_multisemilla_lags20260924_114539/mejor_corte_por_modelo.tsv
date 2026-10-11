@@ -1,0 +1,4 @@
+modelo_id	experimento_origen	ranking_origen	id_origen	metrica_origen	scale_pos_weight	min_data_in_leaf	feature_fraction	learning_rate	num_iterations	num_leaves	min_sum_hessian_in_leaf	dataset_bench	envios	ganancia_total_promedio	ganancia_total_sd	ganancia_total_min	ganancia_total_max	ganancia_public_promedio	ganancia_private_promedio
+1	LAG-009	1	84	0.132489037863148	0.5	181	0.264156247389931	0.0185711199192682	454	256	0.1	competencia_01_ternaria_lags.csv	13000	468600000	5662596.57754285	459800000	474100000	479893333.333333	463760000
+2	LAG-009	2	112	0.132212106303191	0.5	168	0.35	0.00675493259696748	1067	2048	0.0001	competencia_01_ternaria_lags.csv	13500	467390000	4159687.48826159	461450000	471350000	482735000	460813571.428572
+3	LAG-009	3	87	0.131995513814872	0.5	137	0.239049018582973	0.0152796385349906	400	256	0.1	competencia_01_ternaria_lags.csv	12000	467060000	3169069.26399535	463100000	470800000	473990000	464090000
