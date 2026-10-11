@@ -6,12 +6,17 @@ Ejecutar `entregas/p005_3models_runner.ipynb` desde `entregas/`. Necesita los da
 
 Correr toda la notebook como está, en orden, hasta el punto anterior a **Documentación**. Entrena los 3 modelos con 50 semillas, combina las predicciones y guarda el CSV de entrega en `entregas/entregas/`.
 
+**carga 3 datasets en memoria, local con 64 gb de ram no tuve OOM**
+
+
 ## 2. DATASETS
 
 Desde `entregas/dataset/`, ejecutar completas, como están:
 
 1. `versiones_dataset_1.ipynb`: genera los datasets necesarios para la cadena de LAG-009.
 2. `versiones_dataset_2.ipynb`: genera los demás datasets utilizados en la entrega.
+
+**Sí, soy consciente q en LAG-009 los HP son encontrados para un dataset y en las predicciones los uso con 2 datasets diferentes, pero con varias BO no pude mejorar los resultados de esos mismos HP incluso para los otros datasets, y los resultados mandan**
 
 ## 3. BO
 
